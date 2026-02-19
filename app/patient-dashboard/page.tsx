@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,12 +11,162 @@ import { Calendar } from "@/components/ui/calendar"
 import { Progress } from "@/components/ui/progress"
 import { Pill, CalendarIcon, FileText, Activity, Award } from "lucide-react"
 
+interface DashboardData {
+  user: {
+    id: string
+    name: string
+    email: string
+    role: string
+    createdAt: string
+  }
+  appointments: Array<{
+    id: string
+    status: string
+    scheduledAt: string
+    doctor: {
+      name: string
+      specialty: string
+    }
+  }>
+  prescriptions: Array<{
+    id: string
+    medication: string
+    dosage: string
+    frequency: string
+    refillDate: string
+  }>
+  latestMetrics: {
+    BLOOD_PRESSURE?: { value: string; recordedAt: string }
+    BLOOD_SUGAR?: { value: string; recordedAt: string }
+    BMI?: { value: string; recordedAt: string }
+    WEIGHT?: { value: string; recordedAt: string }
+  }
+  alerts: Array<{
+    id: string
+    type: string
+    message: string
+    severity: string
+    resolved: boolean
+  }>
+}
+
 export default function PatientDashboard() {
+  const patientId = "cmltkroey0001t16ksia3bqh1" // Hardcoded for demo purposes
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [date, setDate] = useState<Date | undefined>(new Date())
+
+  // Booking state
+  const [department, setDepartment] = useState("")
+  const [doctorId, setDoctorId] = useState("")
+  const [bookingLoading, setBookingLoading] = useState(false)
+  const [bookingMessage, setBookingMessage] = useState("")
+  const [bookingStatus, setBookingStatus] = useState<'idle' | 'success' | 'error'>('idle')
+
+  const fetchDashboardData = async () => {
+    try {
+      const res = await fetch(`/api/patient/dashboard/${patientId}`)
+      if (!res.ok) throw new Error("Failed to fetch")
+      const json = await res.json()
+      setDashboardData(json)
+    } catch (err) {
+      console.error(err)
+      setError("Failed to load dashboard")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchDashboardData()
+  }, [])
+
+  const handleBookAppointment = async () => {
+    if (!date || !doctorId) {
+      setBookingStatus('error')
+      setBookingMessage("Please select a date and doctor")
+      return
+    }
+
+    setBookingLoading(true)
+    setBookingMessage("")
+    setBookingStatus('idle')
+
+    try {
+      const scheduledAt = date.toISOString()
+
+      // 1. Create Appointment
+      const res = await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId,
+          doctorId,
+          scheduledAt,
+          duration: 30 // Hardcoded duration
+        })
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to book appointment")
+      }
+
+      // 2. Recalculate Queue
+      await fetch('/api/queue/recalculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          doctorId,
+          date: scheduledAt
+        })
+      })
+
+      // 3. Success
+      setBookingStatus('success')
+      setBookingMessage("Appointment booked successfully!")
+
+      // Refresh dashboard data
+      fetchDashboardData()
+
+    } catch (err: any) {
+      console.error(err)
+      setBookingStatus('error')
+      setBookingMessage(err.message || "An error occurred")
+    } finally {
+      setBookingLoading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-lg font-semibold">Loading dashboard...</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-red-500">
+        <p className="text-lg font-semibold">{error}</p>
+      </div>
+    )
+  }
+
+  if (!dashboardData) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-lg font-semibold">No dashboard data available</p>
+      </div>
+    )
+  }
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold mb-6">Welcome, Sanya sadaf </h1>
+      <h1 className="text-3xl font-bold mb-6">Welcome, {dashboardData.user.name}</h1>
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
           <TabsTrigger value="overview">Health Overview</TabsTrigger>
@@ -32,8 +182,8 @@ export default function PatientDashboard() {
                 <CardTitle>Active Prescriptions</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">3</div>
-                <p className="text-sm text-gray-500">Last updated: 2 days ago</p>
+                <div className="text-3xl font-bold">{dashboardData.prescriptions.length}</div>
+                <p className="text-sm text-gray-500">Last updated: Just now</p>
               </CardContent>
             </Card>
             <Card>
@@ -41,8 +191,12 @@ export default function PatientDashboard() {
                 <CardTitle>Upcoming Appointments</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">2</div>
-                <p className="text-sm text-gray-500">Next: Dr. Kumar, 15 May</p>
+                <div className="text-3xl font-bold">{dashboardData.appointments.length}</div>
+                <p className="text-sm text-gray-500">
+                  {dashboardData.appointments.length > 0
+                    ? `Next: ${new Date(dashboardData.appointments[0].scheduledAt).toLocaleDateString()}`
+                    : "No upcoming appointments"}
+                </p>
               </CardContent>
             </Card>
             <Card>
@@ -70,9 +224,24 @@ export default function PatientDashboard() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <MetricCard title="Blood Pressure" value="120/80" unit="mmHg" icon={<Activity className="h-6 w-6" />} />
-                <MetricCard title="Blood Sugar" value="95" unit="mg/dL" icon={<Pill className="h-6 w-6" />} />
-                <MetricCard title="BMI" value="22.5" unit="" icon={<Award className="h-6 w-6" />} />
+                <MetricCard
+                  title="Blood Pressure"
+                  value={dashboardData.latestMetrics.BLOOD_PRESSURE?.value || "N/A"}
+                  unit="mmHg"
+                  icon={<Activity className="h-6 w-6" />}
+                />
+                <MetricCard
+                  title="Blood Sugar"
+                  value={dashboardData.latestMetrics.BLOOD_SUGAR?.value || "N/A"}
+                  unit="mg/dL"
+                  icon={<Pill className="h-6 w-6" />}
+                />
+                <MetricCard
+                  title="BMI"
+                  value={dashboardData.latestMetrics.BMI?.value || "N/A"}
+                  unit=""
+                  icon={<Award className="h-6 w-6" />}
+                />
               </div>
             </CardContent>
           </Card>
@@ -85,18 +254,25 @@ export default function PatientDashboard() {
             <CardContent>
               <ScrollArea className="h-[300px]">
                 <div className="space-y-2">
-                  <AppointmentItem
-                    date="15 May 2023"
-                    time="10:00 AM"
-                    doctor="Dr. Rajesh Kumar"
-                    department="Cardiology"
-                  />
-                  <AppointmentItem
-                    date="22 May 2023"
-                    time="2:30 PM"
-                    doctor="Dr. Anita Desai"
-                    department="Endocrinology"
-                  />
+                  {dashboardData.appointments.map((apt) => (
+                    <AppointmentItem
+                      key={apt.id}
+                      date={new Date(apt.scheduledAt).toLocaleDateString("en-GB", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })}
+                      time={new Date(apt.scheduledAt).toLocaleTimeString("en-US", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                      doctor={apt.doctor.name}
+                      department={apt.doctor.specialty || "General"}
+                    />
+                  ))}
+                  {dashboardData.appointments.length === 0 && (
+                    <p className="text-gray-500">No upcoming appointments.</p>
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>
@@ -109,17 +285,39 @@ export default function PatientDashboard() {
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="department">Department</Label>
-                  <Input id="department" placeholder="Select department" />
+                  <Input
+                    id="department"
+                    placeholder="Select department"
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                  />
                 </div>
                 <div>
-                  <Label htmlFor="doctor">Doctor</Label>
-                  <Input id="doctor" placeholder="Select doctor" />
+                  <Label htmlFor="doctor">Doctor ID</Label>
+                  <Input
+                    id="doctor"
+                    placeholder="Enter Doctor ID"
+                    value={doctorId}
+                    onChange={(e) => setDoctorId(e.target.value)}
+                  />
                 </div>
                 <div>
                   <Label>Select Date</Label>
-                  <Calendar mode="single" selected={date} onSelect={setDate} className="rounded-md border" />
+                  <Calendar
+                    mode="single"
+                    selected={date}
+                    onSelect={setDate}
+                    className="rounded-md border"
+                  />
                 </div>
-                <Button>Book Appointment</Button>
+                <Button onClick={handleBookAppointment} disabled={bookingLoading}>
+                  {bookingLoading ? "Booking..." : "Book Appointment"}
+                </Button>
+                {bookingMessage && (
+                  <p className={`text-sm ${bookingStatus === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                    {bookingMessage}
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -132,9 +330,22 @@ export default function PatientDashboard() {
             <CardContent>
               <ScrollArea className="h-[300px]">
                 <div className="space-y-2">
-                  <MedicationItem name="Metformin" dosage="500mg" frequency="Twice daily" refillDate="1 June 2023" />
-                  <MedicationItem name="Telmisartan" dosage="40mg" frequency="Once daily" refillDate="15 June 2023" />
-                  <MedicationItem name="Aspirin" dosage="75mg" frequency="Once daily" refillDate="1 July 2023" />
+                  {dashboardData.prescriptions.map((script) => (
+                    <MedicationItem
+                      key={script.id}
+                      name={script.medication}
+                      dosage={script.dosage}
+                      frequency={script.frequency || "As needed"}
+                      refillDate={new Date(script.refillDate).toLocaleDateString("en-GB", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    />
+                  ))}
+                  {dashboardData.prescriptions.length === 0 && (
+                    <p className="text-gray-500">No active prescriptions.</p>
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>
@@ -158,7 +369,11 @@ export default function PatientDashboard() {
               <ScrollArea className="h-[300px]">
                 <div className="space-y-2">
                   <DocumentItem name="Blood Test Results" date="10 May 2023" type="Lab Report" />
-                  <DocumentItem name="Cardiology Consultation" date="1 April 2023" type="Doctor's Note" />
+                  <DocumentItem
+                    name="Cardiology Consultation"
+                    date="1 April 2023"
+                    type="Doctor's Note"
+                  />
                   <DocumentItem name="Chest X-Ray" date="15 March 2023" type="Imaging" />
                 </div>
               </ScrollArea>
@@ -177,23 +392,21 @@ export default function PatientDashboard() {
         <TabsContent value="insights" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Personalized Health Insights</CardTitle>
+              <CardTitle>Personalized Health Insights (Alerts)</CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[300px]">
                 <div className="space-y-4">
-                  <InsightItem
-                    title="Blood Pressure Trend"
-                    description="Your blood pressure has been stable over the last 3 months. Keep up the good work!"
-                  />
-                  <InsightItem
-                    title="Medication Adherence"
-                    description="You've been consistent with your medication schedule. This is crucial for managing your condition effectively."
-                  />
-                  <InsightItem
-                    title="Exercise Recommendation"
-                    description="Consider increasing your daily steps to 8000. This can help improve your cardiovascular health."
-                  />
+                  {dashboardData.alerts.map((alert) => (
+                    <InsightItem
+                      key={alert.id}
+                      title={alert.type}
+                      description={`${alert.message} (Severity: ${alert.severity})`}
+                    />
+                  ))}
+                  {dashboardData.alerts.length === 0 && (
+                    <p className="text-gray-500">No active alerts.</p>
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>
@@ -216,7 +429,7 @@ export default function PatientDashboard() {
   )
 }
 
-function MetricCard({ title, value, unit, icon }) {
+function MetricCard({ title, value, unit, icon }: any) {
   return (
     <div className="flex items-center space-x-4 p-4 bg-gray-100 rounded-lg">
       {icon}
@@ -230,7 +443,7 @@ function MetricCard({ title, value, unit, icon }) {
   )
 }
 
-function AppointmentItem({ date, time, doctor, department }) {
+function AppointmentItem({ date, time, doctor, department }: any) {
   return (
     <div className="flex items-center justify-between p-2 bg-gray-100 rounded">
       <div className="flex items-center space-x-4">
@@ -251,7 +464,7 @@ function AppointmentItem({ date, time, doctor, department }) {
   )
 }
 
-function MedicationItem({ name, dosage, frequency, refillDate }) {
+function MedicationItem({ name, dosage, frequency, refillDate }: any) {
   return (
     <div className="flex items-center justify-between p-2 bg-gray-100 rounded">
       <div>
@@ -268,7 +481,7 @@ function MedicationItem({ name, dosage, frequency, refillDate }) {
   )
 }
 
-function DocumentItem({ name, date, type }) {
+function DocumentItem({ name, date, type }: any) {
   return (
     <div className="flex items-center justify-between p-2 bg-gray-100 rounded">
       <div className="flex items-center space-x-4">
@@ -287,7 +500,7 @@ function DocumentItem({ name, date, type }) {
   )
 }
 
-function InsightItem({ title, description }) {
+function InsightItem({ title, description }: any) {
   return (
     <div className="p-4 bg-gray-100 rounded-lg">
       <h3 className="font-semibold mb-2">{title}</h3>
@@ -296,7 +509,7 @@ function InsightItem({ title, description }) {
   )
 }
 
-function GoalItem({ title, current, target, unit = "" }) {
+function GoalItem({ title, current, target, unit = "" }: any) {
   const progress = (current / target) * 100
   return (
     <div>
@@ -310,4 +523,3 @@ function GoalItem({ title, current, target, unit = "" }) {
     </div>
   )
 }
-
