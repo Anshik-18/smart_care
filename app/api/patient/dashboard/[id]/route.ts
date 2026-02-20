@@ -42,6 +42,9 @@ export async function GET(
                     id: true,
                     status: true,
                     scheduledAt: true,
+                    computedStartTime: true,
+                    queuePosition: true,
+                    delayMinutes: true,
                     doctor: {
                         select: {
                             name: true,
@@ -108,9 +111,32 @@ export async function GET(
             return orderA - orderB;
         });
 
+        const enhancedAppointments = appointments.map(apt => {
+            const now = new Date();
+            const startTime = apt.computedStartTime ? new Date(apt.computedStartTime) : new Date(apt.scheduledAt);
+            const diffMs = startTime.getTime() - now.getTime();
+            const estimatedWaitMinutes = diffMs > 0 ? Math.ceil(diffMs / (1000 * 60)) : 0;
+
+            let delayReason = "On schedule";
+            if (apt.delayMinutes && apt.delayMinutes > 0) {
+                delayReason = "Delayed due to previous appointments";
+            } else if (estimatedWaitMinutes > 0 && (!apt.delayMinutes || apt.delayMinutes === 0)) {
+                // If wait time is positive but no specific delay, it might just be future scheduled
+            }
+
+            const humanReadableStatus = `You are position ${apt.queuePosition || '-'} in queue. Estimated wait time is ${estimatedWaitMinutes} minutes.`;
+
+            return {
+                ...apt,
+                estimatedWaitMinutes,
+                delayReason,
+                humanReadableStatus
+            };
+        });
+
         return NextResponse.json({
             user,
-            appointments,
+            appointments: enhancedAppointments,
             prescriptions,
             latestMetrics: {
                 BLOOD_PRESSURE: bp,

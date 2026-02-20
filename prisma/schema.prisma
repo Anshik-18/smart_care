@@ -65,6 +65,7 @@ model Appointment {
   computedEndTime   DateTime?
   queuePosition     Int?
   delayMinutes      Int       @default(0)
+  isEmergency       Boolean   @default(false)
 }
 
 model Prescription {

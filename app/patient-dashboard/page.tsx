@@ -10,6 +10,37 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Calendar } from "@/components/ui/calendar"
 import { Progress } from "@/components/ui/progress"
 import { Pill, CalendarIcon, FileText, Activity, Award } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { Check, ChevronsUpDown } from "lucide-react"
+import { cn } from "@/lib/utils"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 
 interface DashboardData {
   user: {
@@ -23,6 +54,11 @@ interface DashboardData {
     id: string
     status: string
     scheduledAt: string
+    computedStartTime?: string
+    queuePosition?: number
+    estimatedWaitMinutes?: number
+    delayReason?: string
+    humanReadableStatus?: string
     doctor: {
       name: string
       specialty: string
@@ -51,7 +87,7 @@ interface DashboardData {
 }
 
 export default function PatientDashboard() {
-  const patientId = "cmltkroey0001t16ksia3bqh1" // Hardcoded for demo purposes
+  const patientId = "cmltm0mp00001t1bc8bzqml62" // Hardcoded for demo purposes
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -63,6 +99,9 @@ export default function PatientDashboard() {
   const [bookingLoading, setBookingLoading] = useState(false)
   const [bookingMessage, setBookingMessage] = useState("")
   const [bookingStatus, setBookingStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [doctors, setDoctors] = useState<Array<{ id: string, name: string, specialty: string | null }>>([])
+  const [openDoctorSelect, setOpenDoctorSelect] = useState(false)
+  const [openDeptSelect, setOpenDeptSelect] = useState(false)
 
   const fetchDashboardData = async () => {
     try {
@@ -80,7 +119,15 @@ export default function PatientDashboard() {
 
   useEffect(() => {
     fetchDashboardData()
+    // Fetch doctors
+    fetch('/api/doctors')
+      .then(res => res.json())
+      .then(data => setDoctors(data))
+      .catch(err => console.error("Failed to load doctors", err))
   }, [])
+
+  // Derive unique departments from doctors list
+  const departments = Array.from(new Set(doctors.map(d => d.specialty).filter(Boolean))) as string[]
 
   const handleBookAppointment = async () => {
     if (!date || !doctorId) {
@@ -139,6 +186,30 @@ export default function PatientDashboard() {
       setBookingLoading(false)
     }
   }
+
+  const handleReschedule = async (appointmentId: string, action: 'tomorrow' | 'cancel') => {
+    try {
+      const res = await fetch('/api/appointments/reschedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appointmentId,
+          action
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to reschedule");
+      }
+
+      // Refresh data
+      fetchDashboardData();
+      alert(action === 'tomorrow' ? "Rescheduled for tomorrow successfully" : "Appointment cancelled");
+    } catch (error) {
+      console.error(error);
+      alert("Failed to process request");
+    }
+  };
 
   if (loading) {
     return (
@@ -257,6 +328,7 @@ export default function PatientDashboard() {
                   {dashboardData.appointments.map((apt) => (
                     <AppointmentItem
                       key={apt.id}
+                      id={apt.id}
                       date={new Date(apt.scheduledAt).toLocaleDateString("en-GB", {
                         day: "numeric",
                         month: "long",
@@ -268,6 +340,8 @@ export default function PatientDashboard() {
                       })}
                       doctor={apt.doctor.name}
                       department={apt.doctor.specialty || "General"}
+                      onReschedule={handleReschedule}
+                      details={apt}
                     />
                   ))}
                   {dashboardData.appointments.length === 0 && (
@@ -284,22 +358,101 @@ export default function PatientDashboard() {
             <CardContent>
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="department">Department</Label>
-                  <Input
-                    id="department"
-                    placeholder="Select department"
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
-                  />
+                  <Label>Department</Label>
+                  <Popover open={openDeptSelect} onOpenChange={setOpenDeptSelect}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={openDeptSelect}
+                        className="w-full justify-between"
+                      >
+                        {department
+                          ? departments.find((dept) => dept === department)
+                          : "Select department..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-full p-0">
+                      <Command>
+                        <CommandInput placeholder="Search department..." />
+                        <CommandList>
+                          <CommandEmpty>No department found.</CommandEmpty>
+                          <CommandGroup>
+                            {departments.map((dept) => (
+                              <CommandItem
+                                key={dept}
+                                value={dept}
+                                onSelect={(currentValue) => {
+                                  setDepartment(currentValue === department ? "" : currentValue)
+                                  setOpenDeptSelect(false)
+                                  // Clear doctor selection if department changes
+                                  setDoctorId("")
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    department === dept ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                {dept}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div>
-                  <Label htmlFor="doctor">Doctor ID</Label>
-                  <Input
-                    id="doctor"
-                    placeholder="Enter Doctor ID"
-                    value={doctorId}
-                    onChange={(e) => setDoctorId(e.target.value)}
-                  />
+                  <Label>Doctor</Label>
+                  <Popover open={openDoctorSelect} onOpenChange={setOpenDoctorSelect}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={openDoctorSelect}
+                        className="w-full justify-between"
+                        disabled={!department}
+                      >
+                        {doctorId
+                          ? doctors.find((doctor) => doctor.id === doctorId)?.name
+                          : "Select doctor..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-full p-0">
+                      <Command>
+                        <CommandInput placeholder="Search doctor..." />
+                        <CommandList>
+                          <CommandEmpty>No doctor found.</CommandEmpty>
+                          <CommandGroup>
+                            {doctors
+                              .filter(d => !department || d.specialty === department)
+                              .map((doctor) => (
+                                <CommandItem
+                                  key={doctor.id}
+                                  value={doctor.name}
+                                  onSelect={() => {
+                                    setDoctorId(doctor.id === doctorId ? "" : doctor.id)
+                                    setOpenDoctorSelect(false)
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      doctorId === doctor.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  {doctor.name}
+                                </CommandItem>
+                              ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div>
                   <Label>Select Date</Label>
@@ -443,24 +596,87 @@ function MetricCard({ title, value, unit, icon }: any) {
   )
 }
 
-function AppointmentItem({ date, time, doctor, department }: any) {
+function AppointmentItem({ id, date, time, doctor, department, onReschedule, details }: any) {
+  const [showDetails, setShowDetails] = useState(false);
+
   return (
-    <div className="flex items-center justify-between p-2 bg-gray-100 rounded">
-      <div className="flex items-center space-x-4">
-        <CalendarIcon className="h-6 w-6 text-blue-500" />
-        <div>
-          <p className="font-semibold">
-            {date}, {time}
-          </p>
-          <p className="text-sm text-gray-600">
-            {doctor} - {department}
-          </p>
+    <>
+      <div className="flex items-center justify-between p-2 bg-gray-100 rounded">
+        <div className="flex items-center space-x-4">
+          <CalendarIcon className="h-6 w-6 text-blue-500" />
+          <div>
+            <p className="font-semibold">
+              {date}, {time}
+            </p>
+            <p className="text-sm text-gray-600">
+              {doctor} - {department}
+            </p>
+          </div>
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              Options
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="bg-white border shadow-md">
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setShowDetails(true)}>
+              View Details
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onReschedule(id, 'tomorrow')}>
+              Reschedule for Tomorrow
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onReschedule(id, 'cancel')} className="text-red-600">
+              Cancel Appointment
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      <Button variant="outline" size="sm">
-        Reschedule
-      </Button>
-    </div>
+
+      <Dialog open={showDetails} onOpenChange={setShowDetails}>
+        <DialogContent className="bg-white">
+          <DialogHeader>
+            <DialogTitle>Appointment Details</DialogTitle>
+            <DialogDescription>
+              Real-time status of your appointment.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <span className="font-semibold">Doctor:</span>
+              <span>{doctor}</span>
+              <span className="font-semibold">Department:</span>
+              <span>{department}</span>
+              <span className="font-semibold">Scheduled:</span>
+              <span>{date}, {time}</span>
+              <span className="font-semibold">Status:</span>
+              <span className="capitalize">{details.status.toLowerCase()}</span>
+            </div>
+
+            <div className="bg-blue-50 p-3 rounded-md border border-blue-100">
+              <h4 className="font-semibold text-blue-800 mb-1 flex items-center gap-2">
+                <Activity className="h-4 w-4" /> Live Status
+              </h4>
+              <p className="text-sm text-blue-700 mb-2">{details.humanReadableStatus}</p>
+              <div className="grid grid-cols-2 gap-1 text-xs text-blue-600">
+                <span>Queue Position:</span>
+                <span className="font-mono font-bold">#{details.queuePosition || '-'}</span>
+                <span>Est. Wait Time:</span>
+                <span className="font-mono font-bold">{details.estimatedWaitMinutes} mins</span>
+                {details.delayReason && details.delayReason !== 'On schedule' && (
+                  <>
+                    <span>Delay Reason:</span>
+                    <span>{details.delayReason}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

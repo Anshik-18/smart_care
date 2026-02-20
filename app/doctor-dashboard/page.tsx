@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -12,12 +12,118 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Calendar } from "@/components/ui/calendar"
 import { Activity } from "lucide-react"
 
+interface DoctorDashboardData {
+  doctor: {
+    id: string;
+    name: string;
+    email: string;
+    specialty: string;
+  };
+  todaysAppointments: Array<{
+    id: string;
+    status: string;
+    scheduledAt: string;
+    time: string;
+    patientName: string;
+    patient: {
+      id: string;
+      name: string;
+      gender?: string;
+    }
+  }>;
+  queue: Array<{
+    number: number;
+    patient: string;
+    estimatedWait: string;
+    status: string;
+  }>;
+  upcomingAppointments: Array<{
+    id: string;
+    status: string;
+    scheduledAt: string;
+    patient: { name: string };
+  }>;
+  stats: {
+    totalPatientsToday: number;
+    pendingAppointments: number;
+  }
+}
+
 export default function DoctorDashboard() {
+  const doctorId = "cmltm0lts0000t1bc78be3w9a"; // Hardcoded for demo
+  const [dashboardData, setDashboardData] = useState<DoctorDashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [date, setDate] = useState<Date | undefined>(new Date())
+
+  const [isEmergencyLoading, setIsEmergencyLoading] = useState(false);
+  const [emergencyMessage, setEmergencyMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  const fetchData = async (showLoader = true) => {
+    if (showLoader) setLoading(true);
+    try {
+      const res = await fetch(`/api/doctor/dashboard/${doctorId}`);
+      if (!res.ok) throw new Error("Failed to load dashboard data");
+      const json = await res.json();
+      setDashboardData(json);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      if (showLoader) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleSimulateEmergency = async () => {
+    setIsEmergencyLoading(true);
+    setEmergencyMessage(null);
+    try {
+      const res = await fetch("/api/queue/emergency", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doctorId, date: new Date().toISOString() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to simulate emergency");
+
+      setEmergencyMessage({ type: "success", text: "Emergency inserted" });
+      await fetchData(false);
+      setTimeout(() => setEmergencyMessage(null), 3000);
+    } catch (err: any) {
+      console.error(err);
+      setEmergencyMessage({ type: "error", text: err.message || "Error inserting emergency" });
+    } finally {
+      setIsEmergencyLoading(false);
+    }
+  };
+
+  if (loading) return <div className="p-4">Loading dashboard...</div>;
+  if (error) return <div className="p-4 text-red-500">Error: {error}</div>;
+  if (!dashboardData) return <div className="p-4">No data available</div>;
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold mb-6">Dr. Rajesh Kumar's Dashboard</h1>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+        <h1 className="text-3xl font-bold">{dashboardData.doctor.name}'s Dashboard</h1>
+        <div className="flex flex-col items-end mt-4 sm:mt-0">
+          <Button
+            onClick={handleSimulateEmergency}
+            disabled={isEmergencyLoading}
+            className="bg-red-600 hover:bg-red-700 text-white font-bold"
+          >
+            {isEmergencyLoading ? "Simulating..." : "🚨 Simulate Emergency"}
+          </Button>
+          {emergencyMessage && (
+            <span className={`text-sm mt-2 font-medium ${emergencyMessage.type === 'success' ? 'text-green-600' : 'text-red-500'}`}>
+              {emergencyMessage.text}
+            </span>
+          )}
+        </div>
+      </div>
       <Tabs defaultValue="appointments" className="space-y-4">
         <TabsList>
           <TabsTrigger value="appointments">Appointments</TabsTrigger>
@@ -29,16 +135,20 @@ export default function DoctorDashboard() {
         <TabsContent value="appointments" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Today's Schedule</CardTitle>
+              <CardTitle>Today's Schedule ({dashboardData.stats.totalPatientsToday} Total)</CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[300px]">
                 <div className="space-y-2">
-                  <AppointmentItem time="09:00 AM" patient="Priya Sharma" status="Confirmed" />
-                  <AppointmentItem time="10:30 AM" patient="Amit Patel" status="In Progress" />
-                  <AppointmentItem time="02:00 PM" patient="Neha Gupta" status="Waiting" />
-                  <AppointmentItem time="03:30 PM" patient="Rahul Singh" status="Confirmed" />
-                  <AppointmentItem time="05:00 PM" patient="Anita Desai" status="Confirmed" />
+                  {dashboardData.todaysAppointments.map((apt) => (
+                    <AppointmentItem
+                      key={apt.id}
+                      time={apt.time}
+                      patient={apt.patientName}
+                      status={apt.status}
+                    />
+                  ))}
+                  {dashboardData.todaysAppointments.length === 0 && <p className="text-gray-500">No appointments today.</p>}
                 </div>
               </ScrollArea>
             </CardContent>
@@ -46,24 +156,43 @@ export default function DoctorDashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
               <CardHeader>
-                <CardTitle>Patient Queue</CardTitle>
+                <CardTitle>Patient Queue ({dashboardData.stats.pendingAppointments} Pending)</CardTitle>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[200px]">
                   <div className="space-y-2">
-                    <QueueItem number={1} patient="Vikram Mehta" estimatedWait="5 mins" />
-                    <QueueItem number={2} patient="Sonia Reddy" estimatedWait="15 mins" />
-                    <QueueItem number={3} patient="Arjun Nair" estimatedWait="25 mins" />
+                    {dashboardData.queue.map((item) => (
+                      <QueueItem
+                        key={item.number}
+                        number={item.number}
+                        patient={item.patient}
+                        estimatedWait={item.estimatedWait}
+                      />
+                    ))}
+                    {dashboardData.queue.length === 0 && <p className="text-gray-500">Queue is empty.</p>}
                   </div>
                 </ScrollArea>
               </CardContent>
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Upcoming Appointments</CardTitle>
+                <CardTitle>Upcoming Appointments (Next 7 Days)</CardTitle>
               </CardHeader>
               <CardContent>
-                <Calendar mode="single" selected={date} onSelect={setDate} className="rounded-md border" />
+                <div className="mb-4">
+                  <Calendar mode="single" selected={date} onSelect={setDate} className="rounded-md border mx-auto" />
+                </div>
+                <ScrollArea className="h-[150px]">
+                  <div className="space-y-2">
+                    {dashboardData.upcomingAppointments.map(apt => (
+                      <div key={apt.id} className="text-sm p-2 bg-gray-50 rounded flex justify-between">
+                        <span>{new Date(apt.scheduledAt).toLocaleDateString()} - {new Date(apt.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="font-semibold">{apt.patient.name}</span>
+                      </div>
+                    ))}
+                    {dashboardData.upcomingAppointments.length === 0 && <p className="text-gray-500 text-center">No upcoming appointments this week.</p>}
+                  </div>
+                </ScrollArea>
               </CardContent>
             </Card>
           </div>
@@ -248,19 +377,18 @@ export default function DoctorDashboard() {
   )
 }
 
-function AppointmentItem({ time, patient, status }) {
+function AppointmentItem({ time, patient, status }: { time: any, patient: any, status: any }) {
   return (
     <div className="flex justify-between items-center p-2 bg-gray-100 rounded">
       <span>{time}</span>
       <span>{patient}</span>
       <span
-        className={`px-2 py-1 rounded text-sm ${
-          status === "Confirmed"
-            ? "bg-green-200 text-green-800"
-            : status === "In Progress"
-              ? "bg-blue-200 text-blue-800"
-              : "bg-yellow-200 text-yellow-800"
-        }`}
+        className={`px-2 py-1 rounded text-sm ${status === "Confirmed" || status === "SCHEDULED"
+          ? "bg-green-200 text-green-800"
+          : status === "In Progress"
+            ? "bg-blue-200 text-blue-800"
+            : "bg-yellow-200 text-yellow-800"
+          }`}
       >
         {status}
       </span>
@@ -268,7 +396,7 @@ function AppointmentItem({ time, patient, status }) {
   )
 }
 
-function QueueItem({ number, patient, estimatedWait }) {
+function QueueItem({ number, patient, estimatedWait }: { number: any, patient: any, estimatedWait: any }) {
   return (
     <div className="flex justify-between items-center p-2 bg-gray-100 rounded">
       <span>#{number}</span>
@@ -278,7 +406,7 @@ function QueueItem({ number, patient, estimatedWait }) {
   )
 }
 
-function MessageItem({ sender, preview }) {
+function MessageItem({ sender, preview }: { sender: any, preview: any }) {
   return (
     <div className="p-2 bg-gray-100 rounded">
       <div className="font-semibold">{sender}</div>
@@ -286,4 +414,3 @@ function MessageItem({ sender, preview }) {
     </div>
   )
 }
-
