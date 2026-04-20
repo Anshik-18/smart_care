@@ -1,0 +1,6 @@
+queue = [
+    {"id": 1, "name": "A", "scheduled_time": "14:00", "status": "waiting", "is_emergency": False},
+    {"id": 2, "name": "B", "scheduled_time": "14:10", "status": "waiting", "is_emergency": False},
+    {"id": 3, "name": "C", "scheduled_time": "14:20", "status": "waiting", "is_emergency": False},
+    {"id": 4, "name": " D", "scheduled_time": "15:30", "status": "waiting", "is_emergency": True},
+]
